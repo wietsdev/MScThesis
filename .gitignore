@@ -1,0 +1,12 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.env
+
+# Data (download separately, not versioned)
+data/
+
+# Eval outputs
+results/
