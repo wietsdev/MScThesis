@@ -1,9 +1,12 @@
 [project]
 name = "mscthesis"
 version = "0.1.0"
-description = "Add your description here"
+description = "Evaluation of climate information integrity in LLMs"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    "anthropic>=0.116.0",
     "datasets>=5.0.0",
+    "openai>=2.45.0",
+    "python-dotenv>=1.2.2",
 ]

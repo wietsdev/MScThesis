@@ -3,7 +3,12 @@
 __pycache__/
 *.pyc
 *.pyo
+
+# Secrets
 .env
+
+# Response cache
+.cache/
 
 # Data (download separately, not versioned)
 data/
