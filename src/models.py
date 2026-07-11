@@ -1,41 +1,35 @@
+import json
 import os
+from datetime import datetime, timezone
+from pathlib import Path
 
-import anthropic
-import openai
+import requests
 from dotenv import load_dotenv
 
 import cache
 
 load_dotenv()
 
-# Registry: short model ID -> backend config.
-# To add a model: add an entry here, nothing else changes.
-# default_params are merged with any params passed to generate(); caller wins on conflicts.
+COST_LOG = Path(__file__).parent.parent / ".cache" / "cost_log.jsonl"
+
+# Registry: short model ID -> gateway model string + default params.
+# To add a model: add one entry here.
+# long_endpoint: True routes to GATEWAY_URL_LONG (for slow/reasoning models).
 MODEL_REGISTRY = {
-    "gpt-4o": {
-        "backend": "openai",
-        "model_name": "gpt-4o",
+    "claude-haiku": {
+        "model_name": "anthropic.claude-haiku-4-5-20251001-v1:0",
         "default_params": {"max_tokens": 32, "temperature": 0.0},
     },
-    "claude-haiku-3-5": {
-        "backend": "anthropic",
-        "model_name": "claude-haiku-4-5-20251001",
+    "qwen3-32b": {
+        "model_name": "qwen.qwen3-32b-v1:0",
         "default_params": {"max_tokens": 32, "temperature": 0.0},
     },
-    # Open-weight placeholders -- backend is openai-compatible (Together AI, Ollama, vLLM).
-    # Set OPENWEIGHT_BASE_URL and OPENWEIGHT_API_KEY in .env when backend is decided.
-    "llama-3.1-8b": {
-        "backend": "openai_compatible",
-        "model_name": "meta-llama/Llama-3.1-8B-Instruct-Turbo",
-        "base_url_env": "OPENWEIGHT_BASE_URL",
-        "api_key_env": "OPENWEIGHT_API_KEY",
+    "llama3-8b": {
+        "model_name": "meta.llama3-8b-instruct-v1:0",
         "default_params": {"max_tokens": 32, "temperature": 0.0},
     },
     "mistral-7b": {
-        "backend": "openai_compatible",
-        "model_name": "mistralai/Mistral-7B-Instruct-v0.3",
-        "base_url_env": "OPENWEIGHT_BASE_URL",
-        "api_key_env": "OPENWEIGHT_API_KEY",
+        "model_name": "mistral.mistral-7b-instruct-v0:2",
         "default_params": {"max_tokens": 32, "temperature": 0.0},
     },
 }
@@ -43,7 +37,9 @@ MODEL_REGISTRY = {
 
 def generate(prompt: str, model_id: str, **params) -> str:
     if model_id not in MODEL_REGISTRY:
-        raise ValueError(f"Unknown model: '{model_id}'. Add it to MODEL_REGISTRY in models.py.")
+        raise ValueError(
+            f"Unknown model: '{model_id}'. Add it to MODEL_REGISTRY in src/models.py."
+        )
 
     cfg = MODEL_REGISTRY[model_id]
     effective_params = {**cfg.get("default_params", {}), **params}
@@ -52,48 +48,68 @@ def generate(prompt: str, model_id: str, **params) -> str:
     if cached is not None:
         return cached
 
-    backend = cfg["backend"]
-    if backend == "openai":
-        response = _call_openai(prompt, cfg, effective_params)
-    elif backend == "anthropic":
-        response = _call_anthropic(prompt, cfg, effective_params)
-    elif backend == "openai_compatible":
-        response = _call_openai_compatible(prompt, cfg, effective_params)
-    else:
-        raise ValueError(f"Unknown backend: '{backend}'.")
+    text, cost, remaining, input_tokens, output_tokens = _call_gateway(
+        model_name=cfg["model_name"],
+        prompt=prompt,
+        params=effective_params,
+        long_endpoint=cfg.get("long_endpoint", False),
+    )
+    print(f"  [{model_id}] cost=${cost:.4f}  remaining=${remaining:.2f}  tokens={input_tokens}in/{output_tokens}out")
+    _log_cost(model_id, cfg["model_name"], cost, remaining, input_tokens, output_tokens)
 
-    cache.set(model_id, prompt, effective_params, response)
-    return response
+    cache.set(model_id, prompt, effective_params, text)
+    return text
 
 
-def _call_openai(prompt: str, cfg: dict, params: dict) -> str:
-    client = openai.OpenAI(api_key=os.environ["OPENAI_API_KEY"])
-    resp = client.chat.completions.create(
-        model=cfg["model_name"],
-        messages=[{"role": "user", "content": prompt}],
+def _call_gateway(
+    model_name: str,
+    prompt: str,
+    params: dict,
+    long_endpoint: bool = False,
+) -> tuple[str, float, float, int, int]:
+    url_var = "GATEWAY_URL_LONG" if long_endpoint else "GATEWAY_URL"
+    url = os.environ[url_var]
+    api_key = os.environ["GATEWAY_API_KEY"]
+
+    body = {
+        "model": model_name,
+        "messages": [{"role": "user", "content": prompt}],
         **params,
-    )
-    return resp.choices[0].message.content.strip()
+    }
+    headers = {
+        "X-Api-Key": api_key,
+        "Content-Type": "application/json",
+    }
+
+    resp = requests.post(url, json=body, headers=headers, timeout=35)
+    resp.raise_for_status()
+    data = resp.json()
+
+    text = data["content"][0]["text"].strip()
+    cost = data["usage"]["cost"]
+    remaining = data["metadata"]["remaining_quota"]["remaining_budget"]
+    input_tokens = data["usage"]["inputTokens"]
+    output_tokens = data["usage"]["outputTokens"]
+    return text, cost, remaining, input_tokens, output_tokens
 
 
-def _call_anthropic(prompt: str, cfg: dict, params: dict) -> str:
-    client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
-    resp = client.messages.create(
-        model=cfg["model_name"],
-        messages=[{"role": "user", "content": prompt}],
-        **params,
-    )
-    return resp.content[0].text.strip()
-
-
-def _call_openai_compatible(prompt: str, cfg: dict, params: dict) -> str:
-    client = openai.OpenAI(
-        api_key=os.environ.get(cfg["api_key_env"], "ollama"),
-        base_url=os.environ[cfg["base_url_env"]],
-    )
-    resp = client.chat.completions.create(
-        model=cfg["model_name"],
-        messages=[{"role": "user", "content": prompt}],
-        **params,
-    )
-    return resp.choices[0].message.content.strip()
+def _log_cost(
+    model_id: str,
+    model_name: str,
+    cost: float,
+    remaining: float,
+    input_tokens: int,
+    output_tokens: int,
+) -> None:
+    COST_LOG.parent.mkdir(exist_ok=True)
+    entry = {
+        "ts": datetime.now(timezone.utc).isoformat(),
+        "model_id": model_id,
+        "model_name": model_name,
+        "cost": cost,
+        "remaining": remaining,
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+    }
+    with COST_LOG.open("a") as f:
+        f.write(json.dumps(entry) + "\n")
