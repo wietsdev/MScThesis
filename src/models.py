@@ -28,8 +28,8 @@ MODEL_REGISTRY = {
         "model_name": "meta.llama3-8b-instruct-v1:0",
         "default_params": {"max_tokens": 32, "temperature": 0.0},
     },
-    "mistral-7b": {
-        "model_name": "mistral.mistral-7b-instruct-v0:2",
+    "ministral-3-8b": {
+        "model_name": "mistral.ministral-3-8b-instruct",
         "default_params": {"max_tokens": 32, "temperature": 0.0},
     },
 }
@@ -85,7 +85,12 @@ def _call_gateway(
     resp.raise_for_status()
     data = resp.json()
 
-    text = data["content"][0]["text"].strip()
+    # frontier models return content as a list of dicts; open-weight as a plain string
+    raw_content = data["content"]
+    if isinstance(raw_content, str):
+        text = raw_content.strip()
+    else:
+        text = raw_content[0]["text"].strip()
     cost = data["usage"]["cost"]
     remaining = data["metadata"]["remaining_quota"]["remaining_budget"]
     input_tokens = data["usage"]["inputTokens"]
