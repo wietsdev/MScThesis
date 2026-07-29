@@ -49,6 +49,12 @@ def score_mcq_file(responses_path: Path) -> None:
 # --- Cloze ---
 
 def normalize_cloze(text: str) -> str:
+    # strip markdown emphasis and backtick formatting before anything else
+    text = re.sub(r"\*\*(.+?)\*\*", r"\1", text)   # **bold**
+    text = re.sub(r"\*(.+?)\*",     r"\1", text)   # *italic*
+    text = re.sub(r"__(.+?)__",     r"\1", text)   # __bold__
+    text = re.sub(r"_(.+?)_",       r"\1", text)   # _italic_
+    text = re.sub(r"`(.+?)`",       r"\1", text)   # `code`
     return text.strip().lower().strip("\"'.,;:!?()- \t\n")
 
 
