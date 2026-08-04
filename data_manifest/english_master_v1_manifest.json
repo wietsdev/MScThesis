@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "frozen_at": "2026-07-29T15:02:07.609207+00:00",
+  "total_items": 350,
+  "by_source": {
+    "climaqa_gold": 100,
+    "climate_fever": 150,
+    "pira2": 100
+  },
+  "by_type": {
+    "mcq": 200,
+    "claim": 150
+  },
+  "output_file": "english_master_v1.jsonl",
+  "sha256": "121fcfa3422231b20c8627fd6a6c52aa34fd9272bacd4bef8b84134a0747b272"
+}
