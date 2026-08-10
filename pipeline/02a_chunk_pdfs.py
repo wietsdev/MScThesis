@@ -20,6 +20,7 @@ Usage:
 
 import argparse
 import json
+import re
 import sys
 from collections import Counter
 from pathlib import Path
@@ -28,9 +29,9 @@ ROOT     = Path(__file__).parent.parent
 OUT_DIR  = ROOT / "data" / "sources" / "generation"
 OUT_PATH = OUT_DIR / "chunks.jsonl"
 
-CHUNK_WORDS = 300
-OVERLAP     = 50
-MIN_WORDS   = 80
+CHUNK_WORDS = 450
+OVERLAP     = 75
+MIN_WORDS   = 150
 
 TARGET_TOPICS = [
     "B1. Biodiversity Loss",
@@ -139,6 +140,18 @@ TOPIC_KEYWORDS: dict[str, list[str]] = {
 }
 
 
+_FAQ_HEADER_RE = re.compile(
+    r"^(FAQ\s+\d+\s+)?Frequently Asked Questions\s+(Frequently Asked Questions\s+)?"
+    r"(FAQ\s+[\w.]+\s+\|\s+[^\n]+)?",
+    re.IGNORECASE,
+)
+
+
+def clean_chunk(text: str) -> str:
+    """Strip FAQ boilerplate headers that prepend some IPCC chunks."""
+    return _FAQ_HEADER_RE.sub("", text).strip()
+
+
 def tag_chunk(text: str) -> list[str]:
     """Return list of matching target topic names via keyword search."""
     text_lower = text.lower()
@@ -147,6 +160,48 @@ def tag_chunk(text: str) -> list[str]:
         for topic, keywords in TOPIC_KEYWORDS.items()
         if any(kw in text_lower for kw in keywords)
     ]
+
+
+def is_prose(text: str) -> bool:
+    """
+    Return True if the chunk looks like substantive prose.
+
+    Rejects three chunk types that produce poor MCQ:
+    1. Tables / bullet lists: few sentence-ending punctuation marks,
+       short avg words-per-sentence.
+    2. Figure / table descriptions: text describing axes, legends, or
+       confidence-level keys rather than factual content.
+    3. Glossary / annex sections: definition blocks that produce trivial
+       "what is the definition of X" questions.
+    """
+    sentence_ends = sum(1 for c in text if c in ".?!")
+    if sentence_ends < 3:
+        return False
+    words = len(text.split())
+    if words / sentence_ends < 8:
+        return False
+
+    text_lower = text.lower()
+
+    # Reject figure / table description chunks
+    figure_markers = [
+        "figure ts.", "figure box", "table ts.", "figure spm.",
+        "confidence level", "likelihood level",
+        "| synthesis of", "legend:", "note:", "source: ipcc",
+    ]
+    if any(m in text_lower for m in figure_markers):
+        return False
+
+    # Reject glossary / annex blocks (definitions)
+    glossary_markers = [
+        "annex i", "annex ii", "glossary", "see also ",
+        "also known as", "(ipcc ", "(wmo ", "(unep ",
+    ]
+    glossary_hits = sum(1 for m in glossary_markers if m in text_lower)
+    if glossary_hits >= 2:
+        return False
+
+    return True
 
 
 def extract_and_chunk(
@@ -181,9 +236,12 @@ def extract_and_chunk(
             w_slice = words[i : i + CHUNK_WORDS]
             if len(w_slice) < MIN_WORDS:
                 break
-            chunk_text = " ".join(w_slice)
+            chunk_text = clean_chunk(" ".join(w_slice))
+            if len(chunk_text.split()) < MIN_WORDS:
+                i += stride
+                continue
             topics = tag_chunk(chunk_text)
-            if topics:
+            if topics and is_prose(chunk_text):
                 chunk_id = f"{source_label}_p{page_num + 1:04d}_c{chunk_idx:04d}"
                 chunks.append({
                     "chunk_id":   chunk_id,

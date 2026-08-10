@@ -16,6 +16,7 @@ COST_LOG = Path(__file__).parent.parent / ".cache" / "cost_log.jsonl"
 # To add a model: add one entry here.
 # long_endpoint: True routes to GATEWAY_URL_LONG (for slow/reasoning models).
 MODEL_REGISTRY = {
+    # --- SUT panel (evaluated models) ---
     "claude-haiku": {
         "model_name": "anthropic.claude-haiku-4-5-20251001-v1:0",
         "default_params": {"max_tokens": 32, "temperature": 0.0},
@@ -31,6 +32,17 @@ MODEL_REGISTRY = {
     "ministral-3-8b": {
         "model_name": "mistral.ministral-3-8b-instruct",
         "default_params": {"max_tokens": 32, "temperature": 0.0},
+    },
+    # --- Pipeline utility models (NOT SUTs — do not evaluate these) ---
+    # Generator: different family from most SUTs; same model used for translation
+    "qwen3-235b-generator": {
+        "model_name": "qwen.qwen3-235b-a22b-2507-v1:0",
+        "default_params": {"max_tokens": 800, "temperature": 0.5},
+    },
+    # Verifier: different family from generator to avoid shared blind spots
+    "claude-sonnet": {
+        "model_name": "eu.anthropic.claude-sonnet-4-6",
+        "default_params": {"max_tokens": 256, "temperature": 0.0},
     },
 }
 

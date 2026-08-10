@@ -31,9 +31,10 @@ import sys
 from collections import Counter, defaultdict
 from pathlib import Path
 
-ROOT      = Path(__file__).parent.parent
-ITEMS_PATH = ROOT / "data" / "selections" / "generated_mcq.jsonl"
-LOG_PATH   = ROOT / "data" / "sources" / "generation" / "generation_log.jsonl"
+ROOT         = Path(__file__).parent.parent
+ITEMS_PATH   = ROOT / "data" / "selections" / "generated_mcq.jsonl"
+LOG_PATH     = ROOT / "data" / "sources" / "generation" / "generation_log.jsonl"
+CHUNKS_PATH  = ROOT / "data" / "sources" / "generation" / "chunks.jsonl"
 RESULTS_PATH = ROOT / "data" / "sources" / "generation" / "qc_results.jsonl"
 
 SEED = 42
@@ -45,6 +46,17 @@ def load_items() -> list[dict]:
         print("Run pipeline/02_generate_mcq.py first.")
         sys.exit(1)
     return [json.loads(l) for l in ITEMS_PATH.read_text().splitlines() if l.strip()]
+
+
+def load_chunks() -> dict[str, str]:
+    """Return {chunk_id: chunk_text} for looking up full source context."""
+    if not CHUNKS_PATH.exists():
+        return {}
+    return {
+        json.loads(l)["chunk_id"]: json.loads(l)["text"]
+        for l in CHUNKS_PATH.read_text().splitlines()
+        if l.strip()
+    }
 
 
 def load_log() -> dict[str, dict]:
@@ -92,7 +104,13 @@ def sample_items(
     return ordered[:n]
 
 
-def display_item(item: dict, log_entry: dict | None, idx: int, total: int) -> None:
+def display_item(
+    item: dict,
+    log_entry: dict | None,
+    idx: int,
+    total: int,
+    chunk_text: str | None = None,
+) -> None:
     print("\n" + "=" * 64)
     print(f"  Item {idx}/{total}  —  {item['item_id']}")
     topics = ", ".join(item.get("topic", []))
@@ -104,7 +122,9 @@ def display_item(item: dict, log_entry: dict | None, idx: int, total: int) -> No
         notes  = log_entry.get("notes", "")
         entail = "✓" if log_entry.get("entailed") else "✗"
         dist   = "✓" if log_entry.get("distractors_clean") else "✗"
-        print(f"  Verifier: entailed={entail}  distractors={dist}  confidence={conf}")
+        failed = log_entry.get("failed_checks", [])
+        failed_str = f"  failed={failed}" if failed else ""
+        print(f"  Verifier: entailed={entail}  distractors={dist}  confidence={conf}{failed_str}")
         if notes:
             print(f"  Notes:    {notes}")
     print("=" * 64)
@@ -120,19 +140,24 @@ def display_item(item: dict, log_entry: dict | None, idx: int, total: int) -> No
 
     excerpt = item.get("source_excerpt") or ""
     if excerpt:
-        print(f'\nEXCERPT:\n  "{excerpt[:300]}{"..." if len(excerpt) > 300 else ""}"')
+        print(f'\nEXCERPT:\n  "{excerpt}"')
+
+    if chunk_text:
+        print(f"\nSOURCE CHUNK (full):\n  {chunk_text[:800]}{'...' if len(chunk_text) > 800 else ''}")
 
 
-def get_decision() -> tuple[str, str]:
-    """Prompt user. Returns (decision, note) where decision in {a, r, s, q}."""
+def get_decision(has_chunk: bool) -> tuple[str, str]:
+    """Prompt user. Returns (decision, note) where decision in {a, r, s, c, q}."""
+    chunk_hint = "  [C]hunk  " if has_chunk else ""
+    prompt = f"\n[A]ccept  [R]eject  [S]kip{chunk_hint} [Q]uit > "
     while True:
         try:
-            raw = input("\n[A]ccept  [R]eject  [S]kip  [Q]uit > ").strip().lower()
+            raw = input(prompt).strip().lower()
         except (EOFError, KeyboardInterrupt):
             print("\nInterrupted — saving progress.")
             return "q", ""
 
-        if raw in ("a", "r", "s", "q"):
+        if raw in ("a", "r", "s", "c", "q"):
             note = ""
             if raw == "r":
                 try:
@@ -140,12 +165,13 @@ def get_decision() -> tuple[str, str]:
                 except (EOFError, KeyboardInterrupt):
                     pass
             return raw, note
-        print("  Enter a, r, s, or q.")
+        print("  Enter a, r, s, c, or q.")
 
 
 def main(n: int, review_all: bool, resume: bool) -> None:
     items   = load_items()
     log     = load_log()
+    chunks  = load_chunks()
     already = load_existing_results() if resume else set()
 
     queue = sample_items(items, log, already, n, review_all)
@@ -168,9 +194,19 @@ def main(n: int, review_all: bool, resume: bool) -> None:
     skipped = 0
 
     for i, item in enumerate(queue, 1):
-        log_entry = log.get(item["item_id"])
-        display_item(item, log_entry, i, len(queue))
-        decision, note = get_decision()
+        log_entry  = log.get(item["item_id"])
+        chunk_id   = item.get("source_doc_id", "")
+        chunk_text = chunks.get(chunk_id)
+        show_chunk = False
+
+        while True:
+            display_item(item, log_entry, i, len(queue),
+                         chunk_text=chunk_text if show_chunk else None)
+            decision, note = get_decision(has_chunk=bool(chunk_text))
+            if decision == "c":
+                show_chunk = not show_chunk   # toggle full chunk display
+                continue
+            break
 
         if decision == "q":
             break
