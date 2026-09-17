@@ -1,5 +1,6 @@
 # Python
 .venv/
+.venv-comet/
 __pycache__/
 *.pyc
 *.pyo
@@ -15,3 +16,4 @@ data/
 
 # Eval outputs
 results/
+

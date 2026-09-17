@@ -11,8 +11,10 @@ Required fields (must be set before an item enters the frozen English master):
 Translation fields are added by pipeline/04_translate.py and default to None
 for English-only items.
 
-RAG fields (ipcc_confidence, evidence, citation) are reserved for the
-IPCC-RAG phase and default to None.
+RAG fields (ipcc_confidence, citation) are reserved for the IPCC-RAG phase and
+default to None. `evidence` is also populated for Climate-FEVER (its own
+Wikipedia evidence sentences, needed for evidence-based claim verification --
+see pipeline/01_select.py) ahead of that phase; same field, two provenances.
 """
 
 from dataclasses import asdict, dataclass, field, fields
@@ -34,7 +36,14 @@ class Item:
     options:   dict[str, str] | None = None  # MCQ only: {"a": "...", ...}
 
     # --- Classification --------------------------------------------------
-    topic:         list[str] = field(default_factory=list)  # Liu et al. taxonomy
+    # topic holds each source's NATIVE topic system: Liu et al. taxonomy for
+    # ClimaQA/Climate-FEVER/generated_mcq, but CLINB's own six-category system
+    # (Detection/Extremes/Finance/Impacts/Pathways/Scenarios) for CLINB, and
+    # empty for PIRA (untagged). liu_topic is the unified field -- same Liu
+    # taxonomy for every source, backfilled by pipeline/05_tag_topics.py --
+    # use it (not topic) for any cross-source topic-diversity analysis.
+    topic:         list[str] = field(default_factory=list)
+    liu_topic:     list[str] = field(default_factory=list)
     intent:        str | None = None   # from Liu taxonomy
     complexity:    str | None = None   # ClimaQA: BASE | REASONING | HYPOTHETICAL
     cards_category: int | None = None  # CARDS taxonomy 1-5 (claim items only)
@@ -45,7 +54,7 @@ class Item:
 
     # --- RAG phase (reserved, default None) ------------------------------
     ipcc_confidence: str | None = None           # high | medium | low | very low
-    evidence:        list[dict[str, Any]] | None = None
+    evidence:        list[dict[str, Any]] | None = None  # also used by Climate-FEVER: [{"article","text"}, ...]
     citation:        str | None = None
 
     # --- Translation (added by pipeline/04_translate.py) -----------------

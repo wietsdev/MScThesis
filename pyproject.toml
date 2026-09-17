@@ -12,6 +12,10 @@ dependencies = [
     "openai>=2.45.0",
     "pymupdf>=1.28.0",
     "python-dotenv>=1.2.2",
+    "scipy>=1.18.1",
+    "sentencepiece>=0.2.2",
+    "torch>=2.13.0",
+    "transformers>=5.15.0",
 ]
 
 [dependency-groups]

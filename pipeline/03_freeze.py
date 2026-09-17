@@ -6,12 +6,23 @@ manifest with item counts, source breakdown, and a SHA-256 hash of the output.
 Once frozen, the English master should not change -- translation and eval
 pipelines depend on its stability.
 
-Expected inputs (from pipeline/01_select.py and pipeline/02_generate_mcq.py):
+Expected inputs (from pipeline/01_select.py and pipeline/02_generate_mcq*.py):
     data/selections/climaqa_selection.jsonl
     data/selections/climate_fever_selection.jsonl
     data/selections/pira_selection.jsonl
-    data/selections/generated_mcq.jsonl        (optional -- skip if not ready)
+    data/selections/accepted_v1.jsonl          (optional -- manually QC'd v1 generated MCQ)
+    data/selections/accepted_v2.jsonl          (optional -- manually QC'd v2 generated MCQ)
     data/selections/clinb_selection.jsonl      (optional -- skip if not ready)
+
+accepted_v1.jsonl / accepted_v2.jsonl are produced by scripts/extract_accepted.py
+from the manual QC pass (scripts/qc_sample.py) over generated_mcq.jsonl /
+generated_mcq_v2.jsonl. The freeze step never reads the raw generated_mcq*.jsonl
+candidate pools directly -- only items a human has explicitly accepted.
+
+generated_mcq's options are also reshuffled here (see shuffle_generated_mcq_options)
+to remove a generation-time position bias (the generator model heavily favours
+writing the correct answer in slot "b"). ClimaQA/PIRA are external curated
+benchmarks and are left in their original option order.
 
 Outputs:
     data/english_master_v{N}.jsonl
@@ -25,6 +36,7 @@ Usage:
 import argparse
 import hashlib
 import json
+import random
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -37,6 +49,33 @@ ROOT           = Path(__file__).parent.parent
 SELECTIONS_DIR = ROOT / "data" / "selections"
 MANIFEST_DIR   = ROOT / "data_manifest"
 
+# generated_mcq's own generation model has a strong habit of writing the
+# correct option in slot "b" -- a spot-check of accepted_v1+v2 found gold
+# distributed a=27.5%/b=50.0%/c=18.6%/d=3.9% (vs. ~uniform for ClimaQA/PIRA,
+# which come from external curated benchmarks and are left untouched). A SUT
+# model with even a mild position preference would score inflated accuracy on
+# generated_mcq specifically -- which also happens to be the subset covering
+# the topic gaps (D1/D3 etc.) the thesis cares most about. Fixed per-item seed
+# (not a single global Random -- keeps the shuffle stable regardless of item
+# order/file-split changes between freezes) so this is deterministic and
+# reproducible across freezes.
+SHUFFLE_SEED = 42
+
+
+def shuffle_generated_mcq_options(items: list[Item]) -> None:
+    for it in items:
+        if it.source != "generated_mcq" or it.item_type != "mcq" or not it.options:
+            continue
+        letters = sorted(it.options.keys())
+        texts = [it.options[l] for l in letters]
+        k = len(letters)
+        gold_idx = letters.index(it.gold)
+
+        order = list(range(k))
+        random.Random(f"{SHUFFLE_SEED}:{it.item_id}").shuffle(order)
+        it.options = {letters[i]: texts[order[i]] for i in range(k)}
+        it.gold = letters[order.index(gold_idx)]
+
 REQUIRED_SELECTIONS = [
     "climaqa_selection.jsonl",
     "climate_fever_selection.jsonl",
@@ -44,7 +83,8 @@ REQUIRED_SELECTIONS = [
 ]
 
 OPTIONAL_SELECTIONS = [
-    "generated_mcq.jsonl",
+    "accepted_v1.jsonl",
+    "accepted_v2.jsonl",
     "clinb_selection.jsonl",
 ]
 
@@ -130,6 +170,14 @@ def main(version: int | None = None) -> None:
         print(f"  {filename}: {len(items)} items")
 
     print(f"\nTotal items: {len(all_items)}")
+
+    # --- Shuffle generated MCQ option order (fixes generation-time position bias) ---
+    from collections import Counter
+    before = Counter(it.gold for it in all_items if it.source == "generated_mcq")
+    shuffle_generated_mcq_options(all_items)
+    after = Counter(it.gold for it in all_items if it.source == "generated_mcq")
+    print(f"\ngenerated_mcq gold letter distribution -- before shuffle: {dict(sorted(before.items()))}")
+    print(f"generated_mcq gold letter distribution -- after shuffle:  {dict(sorted(after.items()))}")
 
     # --- Validate ---
     errors = validate(all_items)

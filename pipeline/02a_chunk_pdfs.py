@@ -260,16 +260,21 @@ def extract_and_chunk(
 
 
 def main(
-    wgii_path: Path,
-    wgiii_path: Path,
+    wgii_path: Path | None,
+    wgiii_path: Path | None,
+    extra: list[tuple[str, Path]],
+    output_path: Path,
     max_pages: int | None,
     verbose: bool,
 ) -> None:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     all_chunks: list[dict] = []
 
-    for path, label in [(wgii_path, "wgii"), (wgiii_path, "wgiii")]:
-        if path.exists():
+    sources = [(wgii_path, "wgii"), (wgiii_path, "wgiii")] if (wgii_path or wgiii_path) else []
+    sources += [(path, label) for label, path in extra]
+
+    for path, label in sources:
+        if path is not None and path.exists():
             chunks = extract_and_chunk(path, label, max_pages, verbose)
             print(f"  -> {len(chunks)} tagged chunks from {label.upper()}")
             all_chunks.extend(chunks)
@@ -280,7 +285,7 @@ def main(
         print("No chunks extracted. Check PDF paths.")
         sys.exit(1)
 
-    OUT_PATH.write_text("\n".join(json.dumps(c) for c in all_chunks) + "\n")
+    output_path.write_text("\n".join(json.dumps(c) for c in all_chunks) + "\n")
 
     topic_counts = Counter(t for c in all_chunks for t in c["topics"])
     print(f"\nTotal chunks written: {len(all_chunks)}")
@@ -290,7 +295,14 @@ def main(
         bar = "#" * min(n // 10, 40)
         print(f"  {topic[:48]:<48}  {n:4d}  {bar}")
 
-    print(f"\nOutput: {OUT_PATH}")
+    print(f"\nOutput: {output_path}")
+
+
+def _parse_extra(raw: str) -> tuple[str, Path]:
+    label, _, path = raw.partition(":")
+    if not path:
+        raise argparse.ArgumentTypeError(f"expected 'label:path', got {raw!r}")
+    return label, Path(path)
 
 
 if __name__ == "__main__":
@@ -304,9 +316,26 @@ if __name__ == "__main__":
         default=ROOT / "IPCC_AR6_WGIII_SummaryVolume.pdf",
     )
     parser.add_argument(
+        "--extra", type=_parse_extra, action="append", default=[],
+        metavar="LABEL:PATH",
+        help="Additional PDF(s) to chunk alongside/instead of the summary volumes, "
+             "e.g. --extra wgii_ch7:IPCC_AR6_WGII_FinalDraft_Chapter07.pdf. Repeatable.",
+    )
+    parser.add_argument(
+        "--only-extra", action="store_true",
+        help="Skip the default WGII/WGIII summary volumes -- chunk only --extra PDFs "
+             "(for a scoped top-up round without touching the main chunks.jsonl)",
+    )
+    parser.add_argument(
+        "--output", type=Path, default=OUT_PATH,
+        help=f"Output path (default: {OUT_PATH})",
+    )
+    parser.add_argument(
         "--max-pages", type=int, default=None,
         help="Max pages to read per PDF (default: all)",
     )
     parser.add_argument("--verbose", action="store_true")
     args = parser.parse_args()
-    main(args.wgii, args.wgiii, args.max_pages, args.verbose)
+    wgii = None if args.only_extra else args.wgii
+    wgiii = None if args.only_extra else args.wgiii
+    main(wgii, wgiii, args.extra, args.output, args.max_pages, args.verbose)

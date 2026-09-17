@@ -248,6 +248,16 @@ def select_climate_fever(taxonomy: dict[str, list[str]]) -> list[Item]:
     ds = load_dataset("tdiggelm/climate_fever", trust_remote_code=True)
     split_name = list(ds.keys())[0]
     rows = list(ds[split_name])
+    # load_dataset's row order isn't pinned to anything -- a re-download/re-cache
+    # can silently return rows in a different order even though nothing in this
+    # file changed, which makes SEED alone insufficient for reproducibility
+    # (diversity_sample's indices would then point at different claims). Sorting
+    # by the dataset's own stable natural key before any indexing removes that
+    # dependency. This was found via a real incident: regenerating this file to
+    # add `evidence` (no sampling-logic change) silently swapped 26/150 claims
+    # versus the version frozen into english_master_v7/v8 -- see the freeze v9
+    # writeup for the diff. v9 itself is left as-is; this only protects future runs.
+    rows.sort(key=lambda r: str(r["claim_id"]))
 
     # Tag each row with taxonomy topics (join key = Climate_FEVER_{claim_id})
     for row in rows:
@@ -279,6 +289,16 @@ def select_climate_fever(taxonomy: dict[str, list[str]]) -> list[Item]:
 
     items: list[Item] = []
     for row in selected_rows:
+        # Climate-FEVER's own task design is evidence-based verification, not
+        # closed-book claim classification -- DISPUTED specifically means the
+        # evidence sentences disagree with each other, which is unanswerable
+        # without seeing them. A quick closed-book-vs-evidence-based pilot
+        # comparison (gemma3-12b, n=12) showed 25% -> 58.3% accuracy once
+        # evidence was included, so it's retained here rather than discarded.
+        evidence = [
+            {"article": e["article"], "text": e["evidence"]}
+            for e in row["evidences"]
+        ]
         items.append(Item(
             item_id   = f"climate_fever_{row['claim_id']}",
             source    = "climate_fever",
@@ -288,6 +308,7 @@ def select_climate_fever(taxonomy: dict[str, list[str]]) -> list[Item]:
             question  = row["claim"],
             gold      = row["label_str"],
             topic     = row["_topics"],
+            evidence  = evidence,
         ))
     return items
 
