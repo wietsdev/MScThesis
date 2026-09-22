@@ -7,7 +7,7 @@ MSc thesis project building and evaluating a multilingual climate QA benchmark a
 A pipeline that builds a 652-item English benchmark across three task types (MCQ, claim
 verification, freeform), translates it into 12 languages (4 fully evaluated, 8 translation-only
 so far), and evaluates a panel of frontier and open-weight LLMs -- including MCQ
-position-bias debiasing, an LLM-judge for freeform scoring, and reference-free/reference-based
+position-bias debiasing, and reference-free/reference-based
 translation quality estimation. The English set is constructed from five public/generated
 sources with topic-diversity sampling guided by the Liu et al. 26-topic climate taxonomy.
 
@@ -27,13 +27,12 @@ pipeline/                              # numbered stages: run roughly in order
   04_translate_qwen.py translate the master into a target language via Qwen3-235B (gateway),
                        whole-item JSON calls; cross-check translator
   05_tag_topics.py     backfill liu_topic (unified taxonomy) onto PIRA/CLINB, which don't
-                       carry it natively -- use liu_topic (not topic) for cross-source analysis
+                       carry it natively, use liu_topic (not topic) for cross-source analysis
   05_tq_score.py       CometKiwi (reference-free) translation quality scoring, per translator
   05b_tq_score_pira_reference.py   COMET (reference-based) validation vs PIRA's human PT translations
   05c_build_hybrid_translation.py  per-item QE-selection between NLLB and Qwen -> hybrid set
   06_run_eval.py       run one SUT model over a master/hybrid file; --debias-mcq for
                        cyclic-permutation position-bias debiasing
-  07_judge_freeform.py LLM-judge scoring for CLINB freeform responses (6-dim rubric)
 
 cluster/                                # Myriad HPC (NLLB-200 3.3B, local GPU inference)
   download_nllb.py                     one-time model download to $HOME/Scratch/hf_cache
@@ -131,18 +130,16 @@ requires the model pre-downloaded to `$HOME/Scratch/hf_cache` via `cluster/downl
 | Generated MCQ | MCQ | 102 | 4-option | IPCC AR6-derived, v2 pipeline: reframed generation
 prompt + 5-gate independent verifier + gap-driven topic allocation; human-QC'd before freeze |
 | Climate-FEVER | Claim | 150 | SUPPORTS / REFUTES / NOT_ENOUGH_INFO / DISPUTED | label-flattened + topic-diverse; evidence-grounded (Wikipedia sentences kept, untranslated, alongside every translated claim) |
-| CLINB | Freeform | 200 | n/a | scored by LLM judge (`pipeline/07_judge_freeform.py`), not exact-match |
+| CLINB | Freeform | 200 | n/a | (eventually not) scored by LLM judge (`pipeline/07_judge_freeform.py`), not exact-match |
 
 MCQ sets are always scored separately by option count (4- vs 5-option), and every source is
-reported separately -- never blended across sources, since baseline difficulty and topic
+reported separately, never blended across sources, since baseline difficulty and topic
 coverage differ sharply between them (see the dashboard's "Accuracy by Climate Topic" section
-for why).
+for why)
 
 **Topic coverage:** every item across all five sources carries `liu_topic` (Liu et al. 26-topic
-taxonomy) -- native for ClimaQA-Gold/Climate-FEVER/generated MCQ, LLM-backfilled (`pipeline/
-05_tag_topics.py`) for PIRA 2.0 and CLINB, which don't carry it natively. PIRA's backfilled tags
-skew heavily to "F. Other" -- read its topic breakdown as lower-confidence than the other
-sources.
+taxonomy), native for ClimaQA-Gold/Climate-FEVER/generated MCQ, LLM-backfilled (`pipeline/
+05_tag_topics.py`) for PIRA 2.0 and CLINB, which don't carry it natively.
 
 **Building the English master:**
 ```bash
@@ -159,10 +156,10 @@ uv run python pipeline/03_freeze.py           # merges + validates + writes mani
 
 ## Multilingual translation pipeline
 
-**Core 4 languages -- translated, hybrid-built, and evaluated:** Dutch, Portuguese, Hindi,
+**Core 4 languages - translated, hybrid-built, and evaluated:** Dutch, Portuguese, Hindi,
 Swahili.
 
-**8 extension languages -- translated, hybrid-built, QE-scored; evaluation in progress:**
+**8 extension languages - translated, hybrid-built, QE-scored; evaluated:**
 Chinese, Spanish, French, Modern Standard Arabic, Bengali, Indonesian, Russian, Urdu.
 
 Every language uses the same pipeline:
@@ -226,7 +223,7 @@ All calls go through the same gateway. `long_endpoint: True` routes to `GATEWAY_
 uv run python pipeline/06_run_eval.py --model gemma3-12b --debias-mcq
 
 # a translated/hybrid language set
-uv run python pipeline/06_run_eval.py --model gemma3-12b --input data/full_nl_hybrid.jsonl --debias-mcq
+guv run python pipeline/06_run_eval.py --model gemma3-12b --input data/full_nl_hybrid.jsonl --debias-mcq
 
 # pilot / smoke test
 uv run python pipeline/06_run_eval.py --model gemma3-12b --n 40 --dry-run
